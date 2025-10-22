@@ -83,22 +83,49 @@ void draw_miniR(int x, int y);
 void draw_miniONE(int x, int y);
 void draw_miniTWO(int x, int y);
 
+/* Push Button 활성화 */
 void config_KEYs(void)
 {
+	/* 4개의 Push Button 활성화  
+	인터럽트 설정 -> interrupt register Setting*/
 	*(KEY_ptr + 2) = 0b1111;
 }
+/* Interval Timer 활성화 */
+/* Timer Base Address : 0xFF202000 */
 void config_TIMER(void) {
-	int mil = 1000000 - 1; //10 milliseconds
+	int mil = 1000000 - 1; //10 milliseconds => 
 	*(TIMER_ptr + 2) = mil;
 	mil = mil >> 16;
+	// Timer_ptr + 2 가 타이머 시작 하위 16bit 
+	// Timer_ptr + 3 이 타이머 시작 상위 16bit이다.
 	*(TIMER_ptr + 3) = mil;
-	*(TIMER_ptr + 1) = 7;
+	// Timer_ptr + 1dl Control Register 영역
+	// 7 = ob111 => | START | CONT | ITO | 시작, 자동 리셋모드, 인터럽트 활성화 
+	*(TIMER_ptr + 1) = 7; 
 }
+/* IRQ 활성화*/
+/*I/O Peripheral IRQ #
+	Interval timer 0
+	Pushbutton switch parallel port 1
+	Second Interval timer 2
+	Audio port 6
+	PS/2 port 7
+	JTAG port 8
+	IrDA port 9
+	Serial port 10
+	JP1 Expansion parallel port 11
+	JP2 Expansion parallel port 12
+	PS/2 port dual 23
+	NIOS2_WRITE_IENABLE(IRQ 번호값) : 해당 인터럽트 활성화
+	NIOS2_WRITE_STATUS(Interrupt 활성화 상태값) : 인터럽트 상태 정보값
+*/
 void enable_nios2_interrupts_on(void)
 {
 	NIOS2_WRITE_IENABLE(0x1);
 	NIOS2_WRITE_STATUS(1);
 }
+/* Project Main */
+/* goto 문을 이용한 처리*/
 int main(void){
 	srand(time(NULL));
 	int speed = 0;
@@ -112,15 +139,19 @@ int main(void){
 	*(KEY_ptr) = 0b0000;
 	*(SW_ptr) = 0b0000000000;
 	timer = 0;
-	config_KEYs();
-	config_TIMER();
-	enable_nios2_interrupts_on();
+	config_KEYs(); // push button 컨트롤 활성화
+	config_TIMER(); // Interval interrupt 컨트롤 활성화
+	enable_nios2_interrupts_on(); // IRQ 활성화
 
 RESTART: {
-	k = rand() % 5 + 1;
+	// 떨어지는 블록 정보 : 1~5
+	k = rand() % 5 + 1; 
+	// 테트리스 떨어지는 블록 한번의 길이
 	dy = 10;
+	// 총 테트리스 프레임 크기
 	x = 150;
 	y = 40;
+
 	i = 0;
 	RUN = 0;
 
@@ -154,23 +185,34 @@ RESTART: {
 	for (height = 0; height < 22; height++)
 		for (width = 0; width < 18; width++) {
 			nums[height][width] = yst_bl[height][width];
-		} // nums�� ó�� �ʱ�ȭ
+		} // 테트리스 블록 초기화
 	int nums2[22][18];
 	for (height = 0; height < 22; height++)
 		for (width = 0; width < 18; width++) {
 			nums2[height][width] = yst_bl[height][width];
-		} // nums2�� ó�� �ʱ�ȭ
+		} // 테트리스 
 	int nums3[22][18];
+	// Double Buffer front & back 를 이용한 VGA 제어
+	// 이는 Tearing 과 Flickering artifact를 제거하기 위함
+	// PIXEL_BUF_CTRL_BASE = 0xFF203020
+	// PIXEL_BUF_CTRL_BASE + 1 = front 
 	pixel_ctrl_ptr = (int*)PIXEL_BUF_CTRL_BASE;
+	// front buffer 설정
 	*(pixel_ctrl_ptr + 1) = front_buffer;
+	// 화면으로 동기화되기를 대기
 	wait_for_vsync();
 
+	// 실제 출력될 화면 할당
 	pixel_buffer_start = *pixel_ctrl_ptr;
+	// 출력 화면 초기화(pixel_buffer_start 값 초기화)
 	clear_screen();
+	// back buffer도 설정
 	*(pixel_ctrl_ptr + 1) = back_buffer;
 	draw_start();
 	RUN = 0;
+	// 게임 루프 진행
 	while (1) {
+		// back buffer 할당 -> 출력 화면으로
 		pixel_buffer_start = *(pixel_ctrl_ptr + 1);
 		int(*change)[18] = (void*)stack(x, y, k, rot, nums2);
 		for (height = 0; height < 22; height++) {
@@ -178,38 +220,40 @@ RESTART: {
 				nums[height][width] = change[height][width];
 			}
 		}
-		int stuckok = 0;
-		int removepara = 0;
-		int gameover = 0;
-		int checkch = 0;
-		swit = *(SW_ptr);
-		key = *(KEY_ptr);
+		int stuckok = 0; // 충돌여부를 확인하는 변수
+		int removepara = 0; // 
+		int gameover = 0; // gameover 여부
+		int checkch = 0; // 
+		swit = *(SW_ptr); // 입력받은 switch 값
+		key = *(KEY_ptr); // 입력받은 push_button 값
 		int stimer = timer;
 		
 		stuckok = checkforstuck(x, y, k, rot, nums);
+		// 입력된 push_button이 0x02이고 stuckok
 		if ((key & 0x02)&&((stuckok & 0b01) != 0b01)) { 
-			dx = -10;
+			dx = -10; // 블록을 왼쪽으로 이동
 			key = 0;
 		}
 		else if ((key & 0x01) && ((stuckok & 0b10) != 0b10)) {
-			dx = 10;
+			dx = 10; // 블록을 오른쪽으로 이동
 			key = 0;
 		}
 		else if ((key & 0x04) &&(speed <= 7)) {
-			speed += 1;
+			speed += 1; // 아래로 속도를 높임
 			key = 0;
 		}
 		else if ((key & 0x08)&&(speed > 0)) {
-			speed -= 1;
+			speed -= 1; // 속도를 한단계 낮춤
 			key = 0;
 		}
 		if (timer % 100 == 0) {
-			if (swit & 0x01) {
-				rot += 1;
+			if (swit & 0x01) { // 스위치 버튼의 입력값이 존재했다면?
+				rot += 1; // 회전 값을 적용
 				if (rot == 5)
 					rot = 1;
 				swit = 0;
 				stuckok = checkforstuck(x, y, k, rot, nums);
+				// 회전이 불가하다면? 이전 회전 상태에 대한 값을 취소
 				if ((stuckok & 0b10) == 0b10 || (stuckok & 0b01) == 0b01) {
 					rot -= 1;
 					if (rot < 1)
@@ -234,6 +278,7 @@ RESTART: {
 			}
 			dx = 0;
 		}
+		// 초기화 루틴
 		*(KEY_ptr) = 0;
 		*(SW_ptr) = 0;
 		for (height = 0; height < 22; height++) {
@@ -268,7 +313,7 @@ RESTART: {
 				for (width = 0; width < 18; width++) {
 					nums2[height][width] = nums[height][width];
 				}
-		} // ���� ������ �ٴڿ� ���� ���
+		} // ���� ������ �ٴڿ� ���� ���
 		for (height = 0; height < 21; height++) {
 			for (width = 0; width < 18; width++) {
 				if (nums2[height][width] == 1)
@@ -278,7 +323,7 @@ RESTART: {
 					break;
 				}
 			}
-			// ������ ���� �׿����� Ȯ��
+			// ������ ���� �׿����� Ȯ��
 			if (removepara == 1) {
 				for (int a = height; a > 0; a--) {
 					for (width = 0; width < 18; width++) {
@@ -288,7 +333,7 @@ RESTART: {
 				height--;
 			}
 		}
-		// �� ���� ü������ ü����� �����Ͽ� �� ���� ���ְ� ���� �������� �Ʒ��� ����
+		// �� ���� ü������ ü����� �����Ͽ� �� ���� ���ְ� ���� �������� �Ʒ��� ����
 
 		for (width = 4; width < 14; width++) {
 			if (nums2[0][width] == 1) {
@@ -314,13 +359,13 @@ RESTART: {
 					}
 				}
 			}
-			//���ӿ����� PLAYER2�� �ʱ�ȭ
+			//���ӿ����� PLAYER2�� �ʱ�ȭ
 			else if (userchage == 2) {
 				player2 = count;
 				count = 0;
 				userchage = 0;
 			}
-		}//���ӿ����� ����� ���
+		}//���ӿ����� ����� ���
 		if (userchage == 0) {
 			while (1) {
 				pixel_buffer_start = *(pixel_ctrl_ptr + 1);
@@ -343,7 +388,7 @@ RESTART: {
 				wait_for_vsync();
 			}
 		}
-		// ���ӿ����Ǿ�����, 
+		// ���ӿ����Ǿ�����, 
 		displayHex3_0(count);
 		clear_screen();
 		draw_block(k, x, y, rot, nums2);
@@ -380,6 +425,7 @@ void draw_end(int num){
 void draw_start(void){
 	while(RUN == 0)
 	{
+		// 출력할 화면 버퍼의 값으로 할당
 		pixel_buffer_start = *(pixel_ctrl_ptr+1);
 		clear_screen();
 		draw_S(10,110);
@@ -592,6 +638,12 @@ int *stack(int x, int y,int k, int rot,int (*stack)[18])
 	return (int*)stackout;
 }
 
+// 출력된 상태가 왼쪽 혹은 오른쪽으로 이동 불가인지를 출력하는 함수
+// 입력 인자 : x : 블록 열 / y : 블록 행 / k : 현재 입력된 블록 번호
+//  / rot : 회전 값 / stack : 실제 테트리스 블록 맵
+
+// 각 5개의 블록별로 입력된 회전 상태에 따른 충돌 여부를 판단.
+// 충돌되어 있다면 충돌된 방향(왼/오) 를 출력.
 int checkforstuck(int x, int y, int k, int rot, int(*stack)[18])
 {
 	int x_ = (x - 60) / 10;
@@ -603,6 +655,7 @@ int checkforstuck(int x, int y, int k, int rot, int(*stack)[18])
 			stackout[height][width] = stack[height][width];
 		}
 	}
+	// 입력된 push_buffton 값에 따라 
 	switch (k) {
 	case 1:
 		switch (rot) {
@@ -1129,7 +1182,11 @@ void displayHex3_0(int a) {
 	*HEX0_ptr = s0;
 }
 
-
+// 일자 모양 테트리스 블록
+// rot 값에 따라서 - -> | -> - -> | 되도록 구현하였다. 
+/*
+ 1 1 1 1
+*/
 void draw_1(int x, int y,int rot,short int color){
 	int i;
 	int x1[4] = { x,x,x,x };
@@ -1163,6 +1220,11 @@ void draw_1(int x, int y,int rot,short int color){
 			break;
 	}
 }
+// ㄴ 모양의 블록 
+/*
+	1
+	1 1 1
+*/
 void draw_2(int x, int y,int rot, short int color){
 	int i;
 	int x1[4] = { x,x,x + 10,x + 20 };
@@ -1197,7 +1259,11 @@ void draw_2(int x, int y,int rot, short int color){
 	}
 }
 
-
+// 네모 테트리스 블록
+/*
+ 1 1
+ 1 1
+*/
 void draw_3(int x, int y,int rot, short int color){
 	int i;
 	int x1[4] = { x,x,x + 10,x + 10 };
@@ -1232,6 +1298,11 @@ void draw_3(int x, int y,int rot, short int color){
 	}
 }
 
+// 학교 모양 테트리스 블록
+/* 
+	  1
+	1 1 1
+*/
 void draw_4(int x, int y, int rot,short int color){
 	int i;
 	int x1[4] = { x,x + 10,x + 10,x + 20 };
@@ -1270,6 +1341,11 @@ void draw_4(int x, int y, int rot,short int color){
 	}
 }
 
+// 계단 모양 테트리스 블록
+/*
+     1 1
+   1 1 
+*/
 void draw_5(int x, int y,int rot, short int color){
 	int i;
 	int x1[4] = { x,x + 10,x + 10,x + 20 };
@@ -1305,7 +1381,7 @@ void draw_5(int x, int y,int rot, short int color){
 
 }
 
-
+// 순차적으로 테트리스 프레임을 체우기 위한 함수
 void draw_line(int x1, int y1, int x2, int y2, short int color){
 	int t;
 	int st = (abs(y2-y1)>abs(x2-x1));
@@ -1340,8 +1416,13 @@ void draw_line(int x1, int y1, int x2, int y2, short int color){
 	}
 }
 
+// 화면 Tearing 방지를 위한 vsync
+// back buffer - buffer 내용을 스왑하여 back buffer를 출력하고,
+// 
 void wait_for_vsync(){
 	register int status;
+	// 해당 버퍼에 값을 1쓰면 back buffer 와 스왑됨.
+	//
 	*pixel_ctrl_ptr = 1;
 
 	status = *(pixel_ctrl_ptr +3);
@@ -1349,12 +1430,12 @@ void wait_for_vsync(){
 		status = *(pixel_ctrl_ptr +3);
 	}
 }
-
-
+// 화면 버퍼 초기화(하얀색으로 출력)
 void clear_screen(){
 	draw_square(0,0,SCREEN_WIDTH-1,SCREEN_HEIGHT-1,0xFFFF);
 }
-
+// 시작 x,y  끝 x,y 색깔을 입력받아서
+// 화면을 체우는 함수
 void draw_square(int x1, int y1, int x2, int y2,short int color){
 	int x,y;
 	for(x = x1; x<=x2; x++)
